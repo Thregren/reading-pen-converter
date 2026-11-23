@@ -35,3 +35,12 @@ jobs:
         run: |
           swift --version
           dotnet --info
+      - name: Build portable app
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -Architecture '${{ matrix.arch }}' -SkipTemplates
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reading-pen-converter-windows-${{ matrix.arch }}
+          path: dist/windows/ReadingPenConverter-windows-${{ matrix.arch }}-without-templates.zip
+          if-no-files-found: error
+          retention-days: 7

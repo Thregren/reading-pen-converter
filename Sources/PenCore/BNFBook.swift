@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 
 /// A decoded BNF directory. Unknown header bytes and command fields are retained
 /// in the original package; a same-layout edit never synthesizes a new header.
@@ -47,7 +46,7 @@ public struct BNFBook: Sendable {
     private let original: Data
     private let codec: BNFCodec
 
-    public var sourceSHA256: String { SHA256.hash(data: original).map { String(format: "%02x", $0) }.joined() }
+    public var sourceSHA256: String { original.sha256 }
     public init(data: Data) throws {
         let codec = try BNFCodec(fileHeader: data)
         guard let layout = codec.directoryLayout else { throw PenError.invalid("BNF 头中没有完整的目录位置。") }
@@ -301,11 +300,11 @@ extension BNFBook {
                 try audio.write(to: staging.appendingPathComponent(filename), options: .atomic)
                 entries.append(ExtractedMedia(index: item.index, filename: filename, allocationFilename: allocationName,
                     audioBytes: audio.count, mp3Frames: bounds.frames,
-                    sha256: SHA256.hash(data: audio).map { String(format: "%02x", $0) }.joined(), note: nil))
+                    sha256: audio.sha256, note: nil))
             } else {
                 entries.append(ExtractedMedia(index: item.index, filename: allocationName, allocationFilename: allocationName,
                     audioBytes: 0, mp3Frames: nil,
-                    sha256: SHA256.hash(data: allocation).map { String(format: "%02x", $0) }.joined(),
+                    sha256: allocation.sha256,
                     note: "分配区已完整解密，但音频结构或尾部格式不受支持；保留原始字节，未生成 MP3。"))
             }
         }
