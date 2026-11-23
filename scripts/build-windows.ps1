@@ -152,6 +152,8 @@ try {
     if ($usageStatus -ne 1 -or ($usage -join "`n") -notmatch 'penconvert inspect') {
         throw "The packaged converter could not start (exit $usageStatus)."
     }
+    # PowerShell's CI wrapper propagates the last native exit code after this script returns.
+    $global:LASTEXITCODE = 0
 
     [void] (New-Item -ItemType Directory -Path $OutputDirectory -Force)
     $suffix = if ($SkipTemplates) { '-without-templates' } else { '' }
