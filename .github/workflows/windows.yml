@@ -6,7 +6,7 @@ on:
     branches: [windows-build]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   windows:
@@ -38,9 +38,8 @@ jobs:
       - name: Build portable app
         shell: pwsh
         run: ./scripts/build-windows.ps1 -Architecture '${{ matrix.arch }}' -SkipTemplates
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: reading-pen-converter-windows-${{ matrix.arch }}
-          path: dist/windows/ReadingPenConverter-windows-${{ matrix.arch }}-without-templates.zip
-          if-no-files-found: error
-          retention-days: 7
+      - name: Stage build in private draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload windows-build-staging 'dist/windows/ReadingPenConverter-windows-${{ matrix.arch }}-without-templates.zip' --repo '${{ github.repository }}' --clobber
