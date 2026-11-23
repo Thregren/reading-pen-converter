@@ -102,9 +102,15 @@ extension BNLBook {
         let staging = destination.deletingLastPathComponent().appendingPathComponent(".penconvert-\(UUID().uuidString)")
         defer { try? manager.removeItem(at: staging) }
         try output.write(to: staging, options: .withoutOverwriting)
+#if os(Windows)
+        // A same-directory Windows move fails if the destination exists, including
+        // on volumes that do not support hard links.
+        try manager.moveItem(at: staging, to: destination)
+#else
         // Publishing a hard link is atomic and fails if the destination was created
         // concurrently; unlike a rename, it never replaces an existing file.
         try manager.linkItem(at: staging, to: destination)
+#endif
         return BNLToNODResult(sourceSHA256: sourceSHA256, outputSHA256: output.sha256, outputBytes: output.count,
             routes: receipts, media: exported, coverCode: coverCode, bookID: bookID,
             skippedEmptyRoutes: routes.count - nonempty.count, experimental: true, deviceVerified: false,

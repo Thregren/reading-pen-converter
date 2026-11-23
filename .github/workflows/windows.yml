@@ -1,0 +1,44 @@
+name: Windows build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+          - arch: arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: tryswift/setup-swift@ce5fe39afee72fd792fabab6db8ec3005962daf7 # v1.2.0
+        with:
+          swift-version: "6.4.3"
+          windows-toolchain-variant: noasserts
+          windows-minimal: true
+      - name: Check development toolchains
+        shell: pwsh
+        run: |
+          swift --version
+          dotnet --info
+      - name: Build portable app
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -Architecture '${{ matrix.arch }}' -SkipTemplates
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reading-pen-converter-windows-${{ matrix.arch }}
+          path: dist/windows/ReadingPenConverter-windows-${{ matrix.arch }}-without-templates.zip
+          if-no-files-found: error
+          retention-days: 7

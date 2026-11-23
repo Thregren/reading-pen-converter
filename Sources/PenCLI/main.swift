@@ -1,5 +1,8 @@
 import Foundation
 import PenCore
+#if os(Windows)
+import CRT
+#endif
 
 func run() throws {
     var args = Array(CommandLine.arguments.dropFirst())

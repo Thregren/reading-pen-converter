@@ -1,5 +1,9 @@
 import Foundation
+#if os(Windows)
+import CMP3Decoder
+#else
 import CryptoKit
+#endif
 
 public enum PenError: Error, LocalizedError, Sendable {
     case invalid(String)
@@ -21,7 +25,20 @@ public extension Data {
         while end + 1 < limit, self[end] != 0 || self[end + 1] != 0 { end += 2 }
         return String(data: subdata(in: offset..<end), encoding: .utf16LittleEndian)
     }
-    var sha256: String { SHA256.hash(data: self).map { String(format: "%02x", $0) }.joined() }
+    var sha256: String {
+#if os(Windows)
+        var digest = [UInt8](repeating: 0, count: 32)
+        let status = withUnsafeBytes { input in
+            digest.withUnsafeMutableBufferPointer { output in
+                pen_windows_sha256(input.bindMemory(to: UInt8.self).baseAddress, input.count, output.baseAddress)
+            }
+        }
+        precondition(status == 0, "SHA-256 provider failed (\(status))")
+#else
+        let digest = SHA256.hash(data: self)
+#endif
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
 }
 public struct ArtifactReport: Codable, Sendable {
     public let filename: String
