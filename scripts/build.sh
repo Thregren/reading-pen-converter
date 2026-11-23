@@ -29,8 +29,6 @@ for executable in "$app_dir/Contents/MacOS/PenMac" "$package_stage/penconvert"; 
     fi
 done
 
-firmware_source=${READINGPEN_V103_FIRMWARE:-"毛毛虫固件程序版本/毛毛虫二代笔（18版）v103/startup.bin"}
-cp "$firmware_source" "$app_dir/Contents/Resources/v103.bin"
 cp "samples/tadpole/宝宝巴士录音贴纸_214_378.bnf" "$app_dir/Contents/Resources/target.bnf"
 cp "[需解压使用]牛津阅读树拓展阅读 点读版升级套装 Level 1+ 36册/ORT_L1_The_Journey_P.bnl" "$app_dir/Contents/Resources/target.bnl"
 if [[ -f Sources/CMP3Decoder/LICENSE ]]; then
@@ -57,8 +55,8 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>点读包转换</string>
 <key>CFBundleIconFile</key><string>AppIcon.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>0.1.1</string>
+<key>CFBundleVersion</key><string>2</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>CFBundleDocumentTypes</key><array><dict>

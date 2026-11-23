@@ -1,12 +1,17 @@
 import Foundation
 
-/// Interoperability codec derived from the supplied SN95302 v103 firmware.
-/// Firmware identity is bound to the addresses used to read the two key tables.
+/// Parameters for reading and writing the supported BNL format.
 public struct BNLContext: Sendable {
     public static let supportedFirmwareSHA256 = "9f7fff5f0fd7c38f5cdd2a0ba5bea57641c3c7b6097433a076b2924129ef650d"
     let table1: [UInt8]
     let table2: [UInt8]
 
+    init(table1: [UInt8], table2: [UInt8]) {
+        self.table1 = table1
+        self.table2 = table2
+    }
+
+    /// Reads the profile from a supplied firmware image for compatibility and comparison.
     public init(firmware: Data) throws {
         guard firmware.sha256 == Self.supportedFirmwareSHA256 else {
             throw PenError.invalid("当前 BNL 解码器需要已验证的🐛二代 v103 startup.bin 固件。")
@@ -47,6 +52,7 @@ public struct BNLDecodedManifest: Codable, Sendable {
     public let schemaVersion: Int
     public let sourceFilename: String
     public let sourceSHA256: String
+    /// Profile provenance, kept under its original JSON key for existing manifests.
     public let firmwareSHA256: String
     public let routes: [BNLRoute]
     public let media: [BNLExportedMedia]

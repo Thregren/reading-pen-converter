@@ -30,7 +30,6 @@ final class Workspace: ObservableObject {
     struct NODSetup: Identifiable, Sendable {
         let id = UUID()
         let source: URL
-        let firmware: URL
         let codes: Set<UInt32>
         let suggestedCode: UInt32
         let suggestedBookID: UInt32
@@ -118,10 +117,8 @@ final class Workspace: ObservableObject {
         }
         return url
     }
-    func chooseBNLFirmware() -> URL? { resource("v103", "bin") }
     func convertBNLToBNF() {
-        guard let source = current?.url, let templateURL = resource("target", "bnf"),
-              let firmware = chooseBNLFirmware() else { return }
+        guard let source = current?.url, let templateURL = resource("target", "bnf") else { return }
         let output = NSSavePanel()
         output.allowedContentTypes = [UTType(filenameExtension: "bnf")!]
         output.nameFieldStringValue = source.deletingPathExtension().lastPathComponent + "-音频版.bnf"
@@ -132,7 +129,7 @@ final class Workspace: ObservableObject {
         Task {
             do {
                 let report = try await Task.detached(priority: .userInitiated) {
-                    let context = try BNLContext(firmware: Data(contentsOf: firmware, options: .mappedIfSafe))
+                    let context = BNLContext.v103
                     let book = try BNLBook(data: Data(contentsOf: source, options: .mappedIfSafe), context: context)
                     let result = try BNLToBNFConverter.convert(book, template: Data(contentsOf: templateURL), nonAudio: .omitWithReport)
                     try ConversionFiles.save(result.data, report: result.report, to: destination)
@@ -146,8 +143,7 @@ final class Workspace: ObservableObject {
         }
     }
     func convertBNFToBNL() {
-        guard let source = current?.url, let templateURL = resource("target", "bnl"),
-              let firmware = chooseBNLFirmware() else { return }
+        guard let source = current?.url, let templateURL = resource("target", "bnl") else { return }
         let output = NSSavePanel()
         output.allowedContentTypes = [UTType(filenameExtension: "bnl")!]
         output.nameFieldStringValue = source.deletingPathExtension().lastPathComponent + "-音频版.bnl"
@@ -158,7 +154,7 @@ final class Workspace: ObservableObject {
         Task {
             do {
                 let report = try await Task.detached(priority: .userInitiated) {
-                    let context = try BNLContext(firmware: Data(contentsOf: firmware, options: .mappedIfSafe))
+                    let context = BNLContext.v103
                     let template = try BNLBook(data: Data(contentsOf: templateURL, options: .mappedIfSafe), context: context)
                     let sourceBook = try BNFBook(data: Data(contentsOf: source, options: .mappedIfSafe))
                     let result = try BNFToBNLConverter.convert(sourceBook, template: template, systemControls: .omitWithReport)
@@ -196,7 +192,7 @@ final class Workspace: ObservableObject {
         }
     }
     func extractBNL() {
-        guard let source = current?.url, let firmware = chooseBNLFirmware() else { return }
+        guard let source = current?.url else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = source.deletingPathExtension().lastPathComponent + "-decoded"
         panel.message = "导出书籍音频和点读码映射到新目录"
@@ -207,7 +203,7 @@ final class Workspace: ObservableObject {
         Task {
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    let context = try BNLContext(firmware: Data(contentsOf: firmware, options: .mappedIfSafe))
+                    let context = BNLContext.v103
                     return try BNLBook(data: Data(contentsOf: source, options: .mappedIfSafe), context: context)
                         .extract(sourceFilename: source.lastPathComponent, to: destination)
                 }.value
@@ -218,7 +214,7 @@ final class Workspace: ObservableObject {
         }
     }
     func rebuildBNL() {
-        guard let source = current?.url, let firmware = chooseBNLFirmware() else { return }
+        guard let source = current?.url else { return }
         let input = NSOpenPanel()
         input.canChooseDirectories = true
         input.canChooseFiles = false
@@ -234,7 +230,7 @@ final class Workspace: ObservableObject {
         Task {
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    let context = try BNLContext(firmware: Data(contentsOf: firmware, options: .mappedIfSafe))
+                    let context = BNLContext.v103
                     return try BNLBook(data: Data(contentsOf: source, options: .mappedIfSafe), context: context)
                         .rebuild(decodedDirectory: directory, to: destination)
                 }.value
@@ -244,20 +240,20 @@ final class Workspace: ObservableObject {
         }
     }
     func prepareNOD() {
-        guard let source = current?.url, let firmware = chooseBNLFirmware() else { return }
+        guard let source = current?.url else { return }
         progressText = "正在读取可转换的音频点…"
         outcome = nil
         busy = true
         Task {
             do {
                 let setup = try await Task.detached(priority: .userInitiated) {
-                    let context = try BNLContext(firmware: Data(contentsOf: firmware, options: .mappedIfSafe))
+                    let context = BNLContext.v103
                     let book = try BNLBook(data: Data(contentsOf: source, options: .mappedIfSafe), context: context)
                     let routes = book.routes.filter { !$0.mediaIDs.isEmpty }
                     guard let first = routes.first, routes.allSatisfy({ $0.mediaIDs.count == 1 }) else {
                         throw PenError.invalid("当前 NOD 转换仅支持每个点读码对应一段音频的 BNL。")
                     }
-                    return NODSetup(source: source, firmware: firmware, codes: Set(routes.map(\.code)),
+                    return NODSetup(source: source, codes: Set(routes.map(\.code)),
                                     suggestedCode: first.code, suggestedBookID: max(1, UInt32(book.sourceSHA256.prefix(8), radix: 16) ?? 1))
                 }.value
                 nodSetup = setup
@@ -278,7 +274,7 @@ final class Workspace: ObservableObject {
         Task {
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    let context = try BNLContext(firmware: Data(contentsOf: setup.firmware, options: .mappedIfSafe))
+                    let context = BNLContext.v103
                     return try BNLBook(data: Data(contentsOf: setup.source, options: .mappedIfSafe), context: context)
                         .convertToOpenNOD(coverCode: coverCode, bookID: bookID, to: destination)
                 }.value
