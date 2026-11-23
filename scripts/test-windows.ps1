@@ -67,5 +67,16 @@ try {
     }
 } finally {
     $env:Path = $originalPath
-    if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+    # Windows can briefly retain a DLL handle after the converter exits under x64 emulation.
+    for ($attempt = 1; (Test-Path -LiteralPath $stage) -and $attempt -le 5; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction Stop
+        } catch {
+            if ($attempt -eq 5) {
+                Write-Warning "Could not remove the test directory $stage. $($_.Exception.Message)"
+                break
+            }
+            Start-Sleep -Seconds 1
+        }
+    }
 }

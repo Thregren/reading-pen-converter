@@ -1,20 +1,24 @@
 # 点读包转换
 
-一个在 Mac 上离线转换 **🐛 BNL** 和 **小时候的🐸 BNF** 点读包的工具。把点读包从 Finder 拖进 App，选个保存位置，就能生成另一种格式的音频版点读包。
+一个在 macOS 和 Windows 上离线转换 **🐛 BNL** 和 **小时候的🐸 BNF** 点读包的工具。把点读包拖进 App，选个保存位置，就能生成另一种格式的音频版点读包。
 
 **当前支持经过验证的 BNF v11 和 BNL 模式 2 样本。** 两个方向都完成了桌面转换与文件回读验证。生成的文件能否在目标笔上直接点原书，仍待实机确认。
 
-## 快速开始
+## macOS 快速开始
 
-需要 **macOS 14 或更新版本**。App 是通用二进制，适用于 Apple 芯片（arm64）和 64 位 Intel（x86_64）Mac。从 [Releases](https://github.com/Thregren/reading-pen-converter/releases/latest) 下载 macOS ZIP，解压后打开「点读包转换.app」。当前构建使用本地临时签名，尚未经过 Apple 公证。
+需要 **macOS 14 或更新版本**。App 是通用二进制，适用于 Apple 芯片（arm64）和 64 位 Intel（x86_64）Mac。打开 [点读包转换.app](dist/点读包转换.app)，也可以解压 [macOS ZIP](dist/点读包转换-macOS.zip) 后打开。当前构建使用本地临时签名，尚未经过 Apple 公证。
 
 1. 从 Finder 拖入一个 `.bnf` 或 `.bnl` 文件，也可以点击“选择点读包”。
 2. App 自动识别格式和转换方向，使用内置的模板和 BNL 编解码组件，弹出保存窗口。
 3. 选一个 Mac 本地的保存位置。完成后点击“在 Finder 中查看”，即可找到新点读包和同目录的 `.conversion.json` 报告。
 
-<img src="assets/AppIcon.png" width="160" alt="点读包转换的蜡笔图标">
+![BNF 转换为 BNL 后的完成界面](output/finder-drop-check/renamed/01-完成.png)
 
-转换在 Mac 上完成，原始文件保持原样。App 会检查输出目录里同格式包的注册范围，发现冲突时会提示。笔内已有包、其他目录和设备缓存需要另行核对。
+## Windows 快速开始
+
+按系统架构选择 x64（Intel、AMD）或 ARM64 便携版 ZIP，完整解压后双击 `ReadingPenConverter.exe`。把单个 `.bnf` 或 `.bnl` 文件从文件资源管理器拖进窗口，选择保存位置。完成后可以直接打开输出文件夹。ZIP 内含运行库和目标模板。
+
+转换在本机完成，原始文件保持原样。App 会检查输出目录里同格式包的注册范围，发现冲突时会提示。笔内已有包、其他目录和设备缓存需要另行核对。
 
 ## 转换会保留什么？
 
@@ -29,9 +33,11 @@ App 从源包读取数值点读码、播放列表和 MP3 音频，按原数值�
 | 《GoGo 默认卡－儿歌》 | BNF → BNL | 原有的 1 个有效音频码保持一致 |
 | 《Who Did That》 | BNL → BNF | 原有的 99 个有效音频码逐个一致 |
 
+[逐码复核结果](research/paper-route-review.json) · [原书实机核验表](research/paper-tap-check.md)
+
 ## 从源码构建
 
-需要 Swift 6 工具链和 Python 3。从源码打包时，请按 `scripts/build.sh` 中的路径准备两个本地模板样本。BNL 编解码组件内置两张各 256 字节的兼容表，构建和转换都无需原始固件。使用样本固件或点读包的测试仍需准备对应的本地文件。已打包的 App 自带两个模板和 MP3 校验器。
+需要 Swift 6 工具链和 Python 3。打包脚本使用工作区里的两个模板样本。BNL 编解码组件内置两张各 256 字节的兼容表，构建和转换都无需原始固件。需要提取固件系统音频时，可单独传入固件文件。
 
 ```sh
 ./scripts/build.sh
@@ -40,9 +46,18 @@ swift test
 
 构建脚本会为两种架构编译并合并 App 和命令行工具。构建后，可从 `dist/` 打开 App 或运行命令行工具。直接运行 `./dist/penconvert` 可查看命令列表，其中包括包检查、目录扫描、音频提取和 BNL 重封包。
 
+在 Windows 上构建时，使用与目标架构一致的 Swift 工具链、Visual Studio C++ 工具和 .NET 10 SDK。打包脚本默认输出到 `dist/windows/`。
+
+```powershell
+./scripts/build-windows.ps1 -TemplateBnf 'C:\templates\target.bnf' -TemplateBnl 'C:\templates\target.bnl'
+```
+
 | 路径 | 用途 |
 | --- | --- |
 | [Sources/PenMac](Sources/PenMac) | SwiftUI 界面、Finder 拖放与保存流程 |
+| [Windows](Windows) | Windows Forms 界面、文件资源管理器拖放与保存流程 |
 | [Sources/PenCore](Sources/PenCore) | 格式解析、转换、回读校验和码段冲突检查 |
 | [Sources/PenCLI](Sources/PenCLI) | 命令行入口 |
 | [Tests/PenCoreTests](Tests/PenCoreTests) | 解析、写出和冲突检查测试 |
+
+[研究过程与进阶用法存档](research/project-history.md)
