@@ -6,7 +6,7 @@ on:
     branches: [windows-build]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   windows:
@@ -35,12 +35,32 @@ jobs:
         run: |
           swift --version
           dotnet --info
-      - name: Build portable app
+      - name: Retrieve the verified templates from the release draft
         shell: pwsh
-        run: ./scripts/build-windows.ps1 -Architecture '${{ matrix.arch }}' -SkipTemplates
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: reading-pen-converter-windows-${{ matrix.arch }}
-          path: dist/windows/ReadingPenConverter-windows-${{ matrix.arch }}-without-templates.zip
-          if-no-files-found: error
-          retention-days: 7
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'readingpen-release-templates'
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          gh release download v0.2.0 --repo '${{ github.repository }}' --pattern 'ReadingPenConverter-macOS-universal.zip' --dir $stage
+          if ($LASTEXITCODE -ne 0) { throw 'Could not retrieve the release templates.' }
+          $archive = Join-Path $stage 'ReadingPenConverter-macOS-universal.zip'
+          if ((Get-FileHash -LiteralPath $archive).Hash -ne 'd66d3036b821716c749dacb55106b6a019d5ac27af4fbff03bab1d6edd1c0203') {
+            throw 'The macOS release asset differs from the verified package.'
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $stage
+      - name: Build and validate the Windows release package
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'readingpen-release-templates'
+          $bnf = (Get-ChildItem -LiteralPath $stage -Filter 'target.bnf' -File -Recurse).FullName
+          $bnl = (Get-ChildItem -LiteralPath $stage -Filter 'target.bnl' -File -Recurse).FullName
+          ./scripts/build-windows.ps1 -Architecture '${{ matrix.arch }}' -TemplateBnf $bnf -TemplateBnl $bnl
+      - name: Upload to the draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $state = gh release view v0.2.0 --repo '${{ github.repository }}' --json isDraft --jq .isDraft
+          if ($LASTEXITCODE -ne 0 -or $state -ne 'true') { throw 'Release is not a draft.' }
+          gh release upload v0.2.0 'dist/windows/ReadingPenConverter-windows-${{ matrix.arch }}.zip' --repo '${{ github.repository }}'
