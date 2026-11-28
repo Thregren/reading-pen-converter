@@ -104,3 +104,84 @@ final class BNLWriterTests: XCTestCase {
     }
 
 }
+
+extension BNLWriterTests {
+    // Six independently decodable copies make a long donor with a Layer III bit reservoir.
+    // The fragment is longer than five copies, so it can occur just once in the donor.
+    private func truncatedBook(damageOneByte: Bool) throws -> (book: BNLBook, donor: Data) {
+        let donor = (0..<6).reduce(into: Data()) { data, _ in data.append(MP3TestFixture.tone) }
+        var fragment = donor.subdata(in: 1454..<(donor.count - 260))
+        XCTAssertNil(MP3Structure.bounds(fragment))
+        if damageOneByte { fragment[123] ^= 1 }
+        let points = [BNLWritePoint(code: 721001, mediaIDs: [0, 1]),
+                      .init(code: 721002, mediaIDs: [1]),
+                      .init(code: 721003, mediaIDs: [0])]
+        var bytes = try BNLWriter.build(header: header(), context: .v103, points: points, audio: [donor, donor])
+        let parsed = try BNLBook(data: bytes, context: .v103)
+        let broken = try XCTUnwrap(parsed.media.first)
+        fragment.append(Data(repeating: 0, count: broken.allocatedLength - fragment.count))
+        let encoded = BNLBook.encodeAudio(fragment, offset: broken.offset, keys: parsed.audioKeys)
+        bytes.replaceSubrange(broken.offset..<(broken.offset + broken.allocatedLength), with: encoded)
+        return (try BNLBook(data: bytes, context: .v103), donor)
+    }
+
+    private func repairTargetTemplate() throws -> Data {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let template = root.appendingPathComponent("samples/tadpole/宝宝巴士录音贴纸_214_378.bnf")
+        guard FileManager.default.fileExists(atPath: template.path) else { throw XCTSkip("Local BNF template unavailable") }
+        return try Data(contentsOf: template)
+    }
+
+    func testSameBookRepairsUniqueFragmentAndPreservesDonorAndRoutes() throws {
+        let (source, donor) = try truncatedBook(damageOneByte: false)
+        let result = try BNLToBNFConverter.convert(source, template: repairTargetTemplate())
+        let repairs = try XCTUnwrap(result.report.audioRepairs)
+        XCTAssertEqual(repairs.count, 1)
+        let repair = try XCTUnwrap(repairs.first)
+        XCTAssertEqual(repair.mediaID, 0)
+        XCTAssertEqual(repair.donorMediaID, 1)
+        XCTAssertEqual(repair.pointCodes, [721001, 721003])
+        XCTAssertEqual(repair.matchedByteStart, 1454)
+        XCTAssertEqual(repair.matchedByteEnd, donor.count - 260)
+        let output = try BNFBook(data: result.data)
+        let routes = try output.audioRoutes(allowSystemControls: true)
+        XCTAssertEqual(routes.map(\.oid), [721001, 721002, 721003])
+        XCTAssertEqual(routes.map(\.mediaIndices), [[0, 1], [1], [0]])
+        XCTAssertEqual(try output.validatedAudio(at: 1), donor)
+        let recovered = try MP3Decoder.validate(output.validatedAudio(at: 0))
+        let complete = try MP3Decoder.validate(donor)
+        XCTAssertEqual(recovered.sampleRate, complete.sampleRate)
+        // The generated donor has 417/418-byte MPEG-1 frames. The chosen byte
+        // window starts within frame 3 and ends within frame 29.
+        XCTAssertEqual(repair.firstFrame, 4)
+        XCTAssertEqual(repair.endFrame, 30)
+        XCTAssertEqual(recovered.sampleFrames, 26 * 1152)
+    }
+
+    func testUnmatchedRecordingNamesItsPointCodes() throws {
+        let (source, _) = try truncatedBook(damageOneByte: true)
+        let template = try repairTargetTemplate()
+        XCTAssertThrowsError(try BNLToBNFConverter.convert(source, template: template)) { error in
+            let message = error.localizedDescription
+            XCTAssertTrue(message.contains("721001"), message)
+            XCTAssertTrue(message.contains("721003"), message)
+            XCTAssertFalse(message.contains("721002"), message)
+        }
+    }
+}
+
+extension BNLWriterTests {
+    func testInspectorAcceptsValidBNLWithIndexBeyond128KiB() throws {
+        let codes: [UInt32] = [721000, 721001, 721002, 721003, 753768]
+        let points = codes.map { BNLWritePoint(code: $0, mediaIDs: [0]) }
+        let data = try BNLWriter.build(header: header(), context: .v103, points: points, audio: [MP3TestFixture.tone])
+        XCTAssertGreaterThan(try data.u32(0x19c), 0x20000)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("bnl")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try data.write(to: file)
+        let report = try Inspector.inspect(file)
+        XCTAssertEqual(report.format, "🐛 BNL（模式 2）")
+        XCTAssertEqual(report.details["明文索引序号数量"], "5")
+        XCTAssertEqual(report.details["索引空槽"], "32764")
+    }
+}

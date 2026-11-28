@@ -82,13 +82,15 @@ public enum Inspector {
             details["Albi 头部条件"] = (first ^ second) == 0x200 ? "满足（仍需结构校验）" : "不满足；不可直接套用 Albi 解码"
             let version = data[0x1d0..<0x200].map { ($0 >= 0x20 && $0 < 0x7f) ? $0 : 0x20 }
             details["版本区文本"] = String(bytes: version, encoding: .ascii)?.trimmingCharacters(in: .whitespaces)
-            if let index = BNLEvidence.index(in: data) {
-                format = "🐛 BNL（本地样本变体）"
-                status = "已匹配本地变体；可使用 v103 固件解码音频与映射"
-                details["明文索引序号数量"] = String(index.values)
-                details["索引空槽"] = String(index.holes)
-                details["明文索引范围"] = String(format: "0x%X…0x%X", index.start, index.end)
-                details["对应混淆表"] = "0x204 起，共 \(index.values) 个播放表指针；使用 v103 固件解码"
+            if let book = try? BNLBook(data: data, context: .v103) {
+                format = "🐛 BNL（模式 2）"
+                status = "点读码与媒体目录已验证"
+                let mapped = book.routes.filter { $0.index != nil }.count
+                let end = Int(try data.u32(0x19c))
+                details["明文索引序号数量"] = String(mapped)
+                details["索引空槽"] = String(book.routes.count - mapped)
+                details["明文索引范围"] = String(format: "0x%X…0x%X", end - book.routes.count * 4, end)
+                details["媒体数量"] = String(book.media.count)
             }
             limitations.append("未知变体只展示指纹，不会猜测字段或输出伪造的目标包。")
         } else if url.pathExtension.lowercased() == "bnf" {

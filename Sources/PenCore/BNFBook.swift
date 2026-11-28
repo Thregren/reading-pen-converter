@@ -338,27 +338,8 @@ extension BNFBook {
         }
         guard frames >= 3 else { return nil }
         let frameEnd = cursor
-        if cursor <= data.count - 128, data.subdata(in: cursor..<(cursor + 3)) == Data("TAG".utf8) { cursor += 128 }
-        if cursor <= data.count - 32, data.subdata(in: cursor..<(cursor + 8)) == Data("APETAGEX".utf8) {
-            // APEv2 header + items + footer. Tag size includes footer, not header.
-            let size = Int(try data.u32(cursor + 12)), itemCount = Int(try data.u32(cursor + 16))
-            guard try data.u32(cursor + 8) == 2000, size >= 32, itemCount <= 10000,
-                  size <= data.count - cursor - 32, try data.u32(cursor + 20) == 0xa0000000 else { return nil }
-            let footer = cursor + size
-            guard data.subdata(in: footer..<(footer + 8)) == Data("APETAGEX".utf8),
-                  try data.u32(footer + 8) == 2000, try data.u32(footer + 12) == UInt32(size),
-                  try data.u32(footer + 16) == UInt32(itemCount), try data.u32(footer + 20) == 0x80000000 else { return nil }
-            var itemCursor = cursor + 32
-            for _ in 0..<itemCount {
-                guard itemCursor <= footer - 8 else { return nil }
-                let valueLength = Int(try data.u32(itemCursor)); itemCursor += 8
-                guard let keyEnd = data[itemCursor..<footer].firstIndex(of: 0), keyEnd > itemCursor,
-                      valueLength <= footer - keyEnd - 1 else { return nil }
-                itemCursor = keyEnd + 1 + valueLength
-            }
-            guard itemCursor == footer else { return nil }
-            cursor = footer + 32
-        }
+        guard let metadataEnd = MP3Structure.metadataEnd(data, after: cursor) else { return nil }
+        cursor = metadataEnd
         guard data.count - cursor < 512, data[cursor...].allSatisfy({ $0 == 0xff }) else { return nil }
         return (audioStart, frameEnd, frames)
     }

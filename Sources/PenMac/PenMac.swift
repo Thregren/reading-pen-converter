@@ -50,6 +50,12 @@ final class Workspace: ObservableObject {
     }
     func load(_ urls: [URL]) {
         guard !busy else { return }
+        let packages = Array(Set(urls.map(\.standardizedFileURL))).sorted { $0.path < $1.path }
+        if packages.count > 1, packages.allSatisfy({ ["bnf", "bnl"].contains($0.pathExtension.lowercased()) }) {
+            convertBatch(packages)
+            return
+        }
+        batchResult = nil
         progressText = "正在识别文件…"
         outcome = nil
         busy = true
@@ -77,6 +83,49 @@ final class Workspace: ObservableObject {
                 if report.format.hasPrefix("🐛 BNL") { convertBNLToBNF() }
                 else if report.format.hasPrefix("BNF"), report.details["完整目录"] == "已验证" { convertBNFToBNL() }
             }
+        }
+    }
+    struct BatchResult {
+        let folder: URL
+        let converted: Int
+        let repaired: Int
+        let failures: [String]
+    }
+    @Published var batchResult: BatchResult?
+
+    private func convertBatch(_ sources: [URL]) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "开始转换"
+        panel.message = "为这 \(sources.count) 个点读包选择输出文件夹"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        outcome = nil
+        batchResult = nil
+        busy = true
+        Task {
+            var failures: [String] = []
+            var repaired = 0
+            for (index, source) in sources.enumerated() {
+                progressText = "正在转换 \(index + 1)/\(sources.count) · \(source.lastPathComponent)"
+                do {
+                    let ext = try AudioPackageConversion.targetExtension(for: source)
+                    guard let template = Bundle.main.url(forResource: "target", withExtension: ext) else {
+                        throw PenError.invalid("应用缺少目标格式模板。")
+                    }
+                    let summary = try await Task.detached(priority: .userInitiated) {
+                        let destination = try AudioPackageConversion.batchDestination(for: source, in: folder)
+                        return try AudioPackageConversion.convert(source, template: template, to: destination)
+                    }.value
+                    repaired += summary.repaired
+                } catch {
+                    failures.append("\(source.lastPathComponent) · \(error.localizedDescription)")
+                }
+            }
+            batchResult = BatchResult(folder: folder, converted: sources.count - failures.count, repaired: repaired, failures: failures)
+            busy = false
         }
     }
     func extractFirmware() {
@@ -129,15 +178,12 @@ final class Workspace: ObservableObject {
         Task {
             do {
                 let report = try await Task.detached(priority: .userInitiated) {
-                    let context = BNLContext.v103
-                    let book = try BNLBook(data: Data(contentsOf: source, options: .mappedIfSafe), context: context)
-                    let result = try BNLToBNFConverter.convert(book, template: Data(contentsOf: templateURL), nonAudio: .omitWithReport)
-                    try ConversionFiles.save(result.data, report: result.report, to: destination)
-                    return result.report
+                    try AudioPackageConversion.convert(source, template: templateURL, to: destination)
                 }.value
+                let repairNote = report.repaired > 0 ? " 已从同书修复 \(report.repaired) 段录音。" : ""
                 completed(source: source, destination: destination, title: "音频版 BNF 已生成",
-                          summary: "已转换 \(report.mappedRouteCount) 个点读码、\(report.mediaCount) 段音频。",
-                          note: "省略 \(report.omittedEventFieldOffsets.count) 项非音频事件。文件回读核对通过，尚未实机验证。模板身份字段保留；冲突检查仅覆盖输出目录，不等于已检查整支笔。装笔前请查看转换报告。")
+                          summary: "已转换 \(report.routes) 个点读码、\(report.media) 段音频。" + repairNote,
+                          note: "省略 \(report.omitted) 项非音频事件。文件回读核对通过，尚未实机验证。模板身份字段保留；冲突检查仅覆盖输出目录，不等于已检查整支笔。装笔前请查看转换报告。")
             } catch { message = error.localizedDescription }
             busy = false
         }
@@ -154,16 +200,11 @@ final class Workspace: ObservableObject {
         Task {
             do {
                 let report = try await Task.detached(priority: .userInitiated) {
-                    let context = BNLContext.v103
-                    let template = try BNLBook(data: Data(contentsOf: templateURL, options: .mappedIfSafe), context: context)
-                    let sourceBook = try BNFBook(data: Data(contentsOf: source, options: .mappedIfSafe))
-                    let result = try BNFToBNLConverter.convert(sourceBook, template: template, systemControls: .omitWithReport)
-                    try ConversionFiles.save(result.data, report: result.report, to: destination, bnlContext: context)
-                    return result.report
+                    try AudioPackageConversion.convert(source, template: templateURL, to: destination)
                 }.value
                 completed(source: source, destination: destination, title: "音频版 BNL 已生成",
-                          summary: "已转换 \(report.routeCount) 个点读码、\(report.mediaCount) 段音频。",
-                          note: "省略 \(report.omittedSystemControls.count) 条系统控制。文件回读核对通过，尚未实机验证。冲突检查仅覆盖输出目录。播放行为变化详见同目录转换报告。")
+                          summary: "已转换 \(report.routes) 个点读码、\(report.media) 段音频。",
+                          note: "省略 \(report.omitted) 条系统控制。文件回读核对通过，尚未实机验证。冲突检查仅覆盖输出目录。播放行为变化详见同目录转换报告。")
             } catch { message = error.localizedDescription }
             busy = false
         }
@@ -321,6 +362,24 @@ struct ContentView: View {
                 if model.busy {
                     Text(model.progressText).font(.headline)
                     ProgressView().controlSize(.small)
+                } else if let batch = model.batchResult {
+                    Text("批量转换完成").font(.title.bold())
+                    Text("已转换 \(batch.converted) 个 · 失败 \(batch.failures.count) 个")
+                    if batch.repaired > 0 {
+                        Text("已从同书修复 \(batch.repaired) 段录音。").font(.callout)
+                    }
+                    if !batch.failures.isEmpty {
+                        ScrollView {
+                            Text(batch.failures.joined(separator: "\n")).font(.callout)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .multilineTextAlignment(.leading).textSelection(.enabled)
+                        }.frame(maxHeight: 100)
+                    }
+                    HStack {
+                        Button("选择其他点读包…", action: model.chooseFiles)
+                        Button("打开输出文件夹") { NSWorkspace.shared.open(batch.folder) }
+                            .buttonStyle(.borderedProminent)
+                    }
                 } else if let result = model.outcome, result.source == model.current?.url {
                     Text(result.title).font(.title.bold())
                     Text(result.destination.lastPathComponent).foregroundStyle(.secondary)
@@ -331,7 +390,7 @@ struct ContentView: View {
                     selectedBook(item)
                 } else {
                     Text("转换点读包").font(.largeTitle.bold())
-                    Text("拖入 🐛 BNL 或 小时候的🐸 BNF 点读包，自动识别转换方向。")
+                    Text("拖入一个或多个 BNL、BNF 点读包，自动识别转换方向。")
                         .foregroundStyle(.secondary)
                     Button("选择点读包…", action: model.chooseFiles)
                         .buttonStyle(.borderedProminent).controlSize(.large)
@@ -340,7 +399,7 @@ struct ContentView: View {
             .multilineTextAlignment(.center)
             .frame(maxWidth: 470).padding(24)
             Spacer()
-            if model.current != nil {
+            if model.current != nil && model.batchResult == nil {
                 Divider()
                 HStack {
                     Button("打开其他文件…", action: model.chooseFiles)

@@ -1,5 +1,7 @@
 using System;
 using System.ComponentModel;
+using System.Collections.Generic;
+using System.Linq;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -85,7 +87,7 @@ internal sealed class MainWindow : Form
 
         var dropPrompt = new Label
         {
-            Text = "将 BNF 或 BNL 点读包拖到这里",
+            Text = "拖入一个或多个 BNF、BNL 点读包",
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleCenter,
             Font = new Font(Font.FontFamily, 14, FontStyle.Bold),
@@ -142,7 +144,7 @@ internal sealed class MainWindow : Form
         control.DragEnter += (_, e) =>
         {
             if (!busy && (e.AllowedEffect & DragDropEffects.Copy) != 0
-                && DroppedPackage(e) is not null)
+                && DroppedPackages(e) is not null)
             {
                 e.Effect = DragDropEffects.Copy;
                 dropPanel.BackColor = DropHighlight;
@@ -156,18 +158,18 @@ internal sealed class MainWindow : Form
         control.DragDrop += async (_, e) =>
         {
             dropPanel.BackColor = Paper;
-            if (DroppedPackage(e) is { } source)
+            if (DroppedPackages(e) is { } source)
                 await ConvertAsync(source);
         };
         foreach (Control child in control.Controls)
             EnableDrop(child);
     }
 
-    private static string? DroppedPackage(DragEventArgs e)
+    private static string[]? DroppedPackages(DragEventArgs e)
     {
-        if (e.Data?.GetData(DataFormats.FileDrop) is string[] { Length: 1 } files
-            && IsPackage(files[0]) && File.Exists(files[0]))
-            return files[0];
+        if (e.Data?.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } files
+            && files.All(path => IsPackage(path) && File.Exists(path)))
+            return files;
         return null;
     }
 
@@ -184,29 +186,96 @@ internal sealed class MainWindow : Form
             Title = "选择点读包",
             Filter = "点读包 (*.bnf;*.bnl)|*.bnf;*.bnl",
             CheckFileExists = true,
-            Multiselect = false,
+            Multiselect = true,
         };
         if (open.ShowDialog(this) == DialogResult.OK)
-            await ConvertAsync(open.FileName);
+            await ConvertAsync(open.FileNames);
     }
 
-    private async Task ConvertAsync(string source)
-    {
-        if (busy || !IsPackage(source))
-            return;
+    private static string TargetFormat(string source) =>
+        Path.GetExtension(source).Equals(".bnf", StringComparison.OrdinalIgnoreCase) ? "bnl" : "bnf";
 
-        var sourceFormat = Path.GetExtension(source).Equals(".bnf", StringComparison.OrdinalIgnoreCase)
-            ? "bnf" : "bnl";
-        var targetFormat = sourceFormat == "bnf" ? "bnl" : "bnf";
-        var root = AppContext.BaseDirectory;
-        var converter = Path.Combine(root, "penconvert.exe");
-        var template = Path.Combine(root, "Resources", $"target.{targetFormat}");
-        if (!File.Exists(converter) || !File.Exists(template))
-        {
-            ShowError("找不到转换程序或所需模板。请重新解压完整的 Windows 构建包。");
+    private async Task ConvertAsync(string[] paths)
+    {
+        if (busy || paths.Length == 0)
             return;
+        var sources = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        bool batch = sources.Length > 1;
+        string? singleOutput = null;
+        string folder;
+        if (batch)
+        {
+            using var chooser = new FolderBrowserDialog
+            {
+                Description = $"为这 {sources.Length} 个点读包选择输出文件夹",
+                UseDescriptionForTitle = true,
+            };
+            if (chooser.ShowDialog(this) != DialogResult.OK)
+                return;
+            folder = chooser.SelectedPath;
+        }
+        else
+        {
+            singleOutput = ChooseDestination(sources[0], TargetFormat(sources[0]));
+            if (singleOutput is null)
+                return;
+            folder = Path.GetDirectoryName(singleOutput)!;
         }
 
+        busy = true;
+        pickButton.Enabled = false;
+        showOutputButton.Visible = false;
+        outputFolder = null;
+        var failures = new List<string>();
+        try
+        {
+            for (int index = 0; index < sources.Length; index++)
+            {
+                string source = sources[index];
+                status.Text = $"正在转换 {index + 1}/{sources.Length} · {Path.GetFileName(source)}";
+                try
+                {
+                    string destination = singleOutput ?? BatchDestination(folder, source);
+                    await ConvertFileAsync(source, destination);
+                }
+                catch (Exception error) when (error is Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
+                {
+                    failures.Add($"{Path.GetFileName(source)} · {error.Message}");
+                }
+            }
+            int converted = sources.Length - failures.Count;
+            if (converted > 0)
+            {
+                outputFolder = folder;
+                showOutputButton.Visible = true;
+            }
+            status.Text = batch ? $"已转换 {converted} 个 · 失败 {failures.Count} 个"
+                : converted == 1 ? $"已保存 {Path.GetFileName(singleOutput)}" : "转换失败";
+            if (failures.Count > 0)
+                ShowError(string.Join(Environment.NewLine, failures));
+        }
+        finally
+        {
+            busy = false;
+            pickButton.Enabled = true;
+        }
+    }
+
+    private static string BatchDestination(string folder, string source)
+    {
+        string stem = Path.GetFileNameWithoutExtension(source) + "-音频版";
+        string ext = TargetFormat(source);
+        for (int number = 1; ; number++)
+        {
+            string name = number == 1 ? stem : $"{stem} ({number})";
+            string path = Path.Combine(folder, $"{name}.{ext}");
+            if (!Path.Exists(path) && !Path.Exists($"{path}.conversion.json"))
+                return path;
+        }
+    }
+
+    private string? ChooseDestination(string source, string targetFormat)
+    {
         using var save = new SaveFileDialog
         {
             Title = $"保存音频版 {targetFormat.ToUpperInvariant()}",
@@ -230,60 +299,51 @@ internal sealed class MainWindow : Form
             }
         };
         if (save.ShowDialog(this) != DialogResult.OK)
-            return;
+            return null;
 
-        var destination = save.FileName;
-        busy = true;
-        pickButton.Enabled = false;
-        showOutputButton.Visible = false;
-        outputFolder = null;
-        status.Text = $"正在转换为 {targetFormat.ToUpperInvariant()}…";
-        try
-        {
-            var processInfo = new ProcessStartInfo(converter)
-            {
-                WorkingDirectory = root,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8,
-            };
-            processInfo.ArgumentList.Add($"convert-{sourceFormat}-to-{targetFormat}");
-            processInfo.ArgumentList.Add(source);
-            processInfo.ArgumentList.Add(template);
-            processInfo.ArgumentList.Add(destination);
-            processInfo.ArgumentList.Add("--audio-only");
+        return save.FileName;
+    }
 
-            using var process = Process.Start(processInfo)
-                ?? throw new InvalidOperationException("无法启动转换程序。");
-            var readOutput = process.StandardOutput.ReadToEndAsync();
-            var readError = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            await readOutput;
-            var error = (await readError).Trim();
-            if (process.ExitCode != 0)
-                throw new InvalidOperationException(error.Length == 0
-                    ? $"转换程序退出（代码 {process.ExitCode}）。"
-                    : error);
-            if (!File.Exists(destination) || !File.Exists($"{destination}.conversion.json"))
-                throw new IOException("转换程序未生成完整的输出文件。");
+    private static async Task ConvertFileAsync(string source, string destination)
+    {
+        string targetFormat = TargetFormat(source);
+        string sourceFormat = targetFormat == "bnf" ? "bnl" : "bnf";
+        string root = AppContext.BaseDirectory;
+        string converter = Path.Combine(root, "penconvert.exe");
+        string template = Path.Combine(root, "Resources", $"target.{targetFormat}");
+        if (!File.Exists(converter) || !File.Exists(template))
+            throw new IOException("找不到转换程序或所需模板。请重新解压完整的 Windows 构建包。");
 
-            outputFolder = Path.GetDirectoryName(destination);
-            showOutputButton.Visible = outputFolder is not null;
-            status.Text = $"已保存 {Path.GetFileName(destination)}";
-        }
-        catch (Exception error) when (error is Win32Exception or InvalidOperationException or IOException)
+        var processInfo = new ProcessStartInfo(converter)
         {
-            status.Text = "转换失败";
-            ShowError(error.Message);
-        }
-        finally
-        {
-            busy = false;
-            pickButton.Enabled = true;
-        }
+            WorkingDirectory = root,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+        };
+        processInfo.ArgumentList.Add($"convert-{sourceFormat}-to-{targetFormat}");
+        processInfo.ArgumentList.Add(source);
+        processInfo.ArgumentList.Add(template);
+        processInfo.ArgumentList.Add(destination);
+        processInfo.ArgumentList.Add("--audio-only");
+
+        using var process = Process.Start(processInfo)
+            ?? throw new InvalidOperationException("无法启动转换程序。");
+        var readOutput = process.StandardOutput.ReadToEndAsync();
+        var readError = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        await readOutput;
+        var error = (await readError).Trim();
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(error.Length == 0
+                ? $"转换程序退出（代码 {process.ExitCode}）。"
+                : error);
+        if (!File.Exists(destination) || !File.Exists($"{destination}.conversion.json"))
+            throw new IOException("转换程序未生成完整的输出文件。");
+
     }
 
     private void ShowOutput(object? sender, EventArgs e)

@@ -10,6 +10,19 @@ public struct BNLToBNFReport: Sendable, Codable {
         public let fieldOffset: Int
         public let words: [UInt16]
     }
+    public struct AudioRepair: Sendable, Codable {
+        public let mediaID: Int
+        public let donorMediaID: Int
+        public let pointCodes: [UInt32]
+        /// Offsets into the donor's decoded BNL media allocation; ends are exclusive.
+        public let matchedByteStart: Int
+        public let matchedByteEnd: Int
+        public let firstFrame: Int
+        public let endFrame: Int
+        public let method: String
+    }
+    /// Absent in reports written before same-book repair was supported.
+    public let audioRepairs: [AudioRepair]?
     public let sourceSHA256: String
     public let outputSHA256: String
     public let templateSHA256: String
@@ -46,18 +59,34 @@ public enum BNLToBNFConverter {
         }
         let tracks = source.media.sorted { $0.id < $1.id }
         let ids = Dictionary(uniqueKeysWithValues: tracks.enumerated().map { ($0.element.id, $0.offset) })
-        let audio = try tracks.map { track -> Data in
-            let allocated = try source.allocatedAudio(track)
-            guard let bounds = MP3Structure.bounds(allocated), allocated.dropFirst(bounds.contentEnd).allSatisfy({ $0 == 0 }) else {
-                throw PenError.invalid("BNL 媒体 \(track.id) 不是完整 MP3 或具有未识别尾部。")
+        var audio = [Data](repeating: Data(), count: tracks.count)
+        var donors: [SameBookMP3Repair.Donor] = []
+        var damaged: [(index: Int, allocation: Data)] = []
+        for (index, track) in tracks.enumerated() {
+            let allocation = try source.allocatedAudio(track)
+            if let bounds = MP3Structure.bounds(allocation) {
+                let bytes = Data(allocation.prefix(bounds.contentEnd))
+                if (try? MP3Decoder.validate(bytes)) != nil {
+                    audio[index] = bytes
+                    donors.append(.init(id: track.id, data: bytes, bounds: bounds))
+                    continue
+                }
             }
-            let bytes = Data(allocated.prefix(bounds.contentEnd)); _ = try MP3Decoder.validate(bytes); return bytes
+            damaged.append((index, allocation))
+        }
+        var repairs: [BNLToBNFReport.AudioRepair] = []
+        for (index, allocation) in damaged {
+            let id = tracks[index].id
+            let codes = source.routes.filter { $0.mediaIDs.contains(id) }.map(\.code).sorted()
+            let result = try SameBookMP3Repair.recover(allocation, mediaID: id, codes: codes, donors: donors)
+            audio[index] = result.audio
+            repairs.append(result.report)
         }
         let points = source.routes.map { route in
             BNLWritePoint(code: route.code, mediaIDs: route.mediaIDs.map { ids[$0]! })
         }
         let result = try BNFWriter.write(template: template, points: points, audio: audio)
-        return .init(data: result, report: .init(sourceSHA256: source.sourceSHA256, outputSHA256: result.sha256,
+        return .init(data: result, report: .init(audioRepairs: repairs, sourceSHA256: source.sourceSHA256, outputSHA256: result.sha256,
             templateSHA256: template.sha256, mediaCount: tracks.count,
             mappedRouteCount: source.routes.filter { $0.index != nil }.count,
             emptySlotCount: source.routes.filter { $0.index == nil }.count,

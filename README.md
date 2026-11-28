@@ -8,7 +8,7 @@
 
 需要 **macOS 14 或更新版本**。App 是通用二进制，适用于 Apple 芯片（arm64）和 64 位 Intel（x86_64）Mac。从 [GitHub Releases](https://github.com/Thregren/reading-pen-converter/releases/latest) 下载 `ReadingPenConverter-macOS-universal.zip`，解压后打开「点读包转换」。当前构建使用本地临时签名，尚未经过 Apple 公证。
 
-1. 从 Finder 拖入一个 `.bnf` 或 `.bnl` 文件，也可以点击“选择点读包”。
+1. 从 Finder 拖入一个或多个 `.bnf` 或 `.bnl` 文件，也可以点击“选择点读包”。
 2. App 自动识别格式和转换方向，使用内置的模板和 BNL 编解码组件，弹出保存窗口。
 3. 选一个 Mac 本地的保存位置。完成后点击“在 Finder 中查看”，即可找到新点读包和同目录的 `.conversion.json` 报告。
 
@@ -16,9 +16,15 @@
 
 ## Windows 快速开始
 
-从 [GitHub Releases](https://github.com/Thregren/reading-pen-converter/releases/latest) 选择 x64（Intel、AMD）或 ARM64 便携版 ZIP，完整解压后双击 `ReadingPenConverter.exe`。把单个 `.bnf` 或 `.bnl` 文件从文件资源管理器拖进窗口，选择保存位置。完成后可以直接打开输出文件夹。ZIP 内含运行库和目标模板。
+从 [GitHub Releases](https://github.com/Thregren/reading-pen-converter/releases/latest) 选择 x64（Intel、AMD）或 ARM64 便携版 ZIP，完整解压后双击 `ReadingPenConverter.exe`。把一个或多个 `.bnf` 或 `.bnl` 文件从文件资源管理器拖进窗口，选择保存位置。完成后可以直接打开输出文件夹。ZIP 内含运行库和目标模板。
 
 转换在本机完成，原始文件保持原样。App 会检查输出目录里同格式包的注册范围，发现冲突时会提示。笔内已有包、其他目录和设备缓存需要另行核对。
+
+## 批量转换
+
+一次选择或拖入多个点读包，再选一次输出文件夹。BNF 和 BNL 可以混选，App 会逐个转换，并为每个成功的点读包保存一份转换报告。遇到同名包或报告时，App 会给新文件加上编号。遇到点读码冲突或无法读取的书时，会列出失败原因并继续处理其余文件。
+
+BNL 转 BNF 时，如果遇到截断的 MP3，App 会在同一本书的完整录音中查找相同的字节，并按 MP3 帧边界恢复片段。转换报告会记录修复的录音、来源和受影响的点读码。找不到可靠匹配时，App 会提示媒体编号和引用它的点读码。
 
 ## 转换会保留什么？
 
